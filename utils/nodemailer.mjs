@@ -1,39 +1,60 @@
 import nodemailer from 'nodemailer';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// ─── Timeout config ────────────────────────────────────────────────────────────
+// Read from env so it can be tuned per environment without code changes.
+const TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS || '8000', 10);
 
+// ─── Transporter (module-level singleton) ─────────────────────────────────────
+// Created once at startup — not inside each request — so the TCP connection
+// pool is reused. Gmail SMTP is kept as required.
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+  // Layer 1 timeout: Nodemailer's own connection deadlines.
+  // These fire for slow TCP handshakes on most environments.
+  connectionTimeout: TIMEOUT_MS,
+  greetingTimeout:   TIMEOUT_MS,
+  socketTimeout:     TIMEOUT_MS,
+});
 
+// ─── withTimeout ──────────────────────────────────────────────────────────────
+// Layer 2 timeout: a hard Promise.race deadline.
+// Critical for cloud environments (Render, Railway) where Google silently
+// drops the TCP connection — Nodemailer's built-in timeouts never fire
+// because the OS-level socket never errors. This wrapper guarantees the
+// Promise always settles within `ms` milliseconds regardless.
+const withTimeout = (promise, ms) => {
+  const deadline = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`SMTP timed out after ${ms}ms — Gmail may be blocking this host`)), ms)
+  );
+  return Promise.race([promise, deadline]);
+};
 
-
-const mail_service = async (req, res) => {
-
-  // Safe fallback: prevents crash if req.body is undefined
-  const { name, email, phone, message } = req.body || {};
-
-  // Validate BEFORE doing anything else
-  if (!name || !email || !phone || !message) {
-    return res.status(400).json({ error: 'All fields (name, email, phone, message) are required' });
+// ─── verifyConnection ─────────────────────────────────────────────────────────
+// Calls transporter.verify() with both timeout layers.
+// Use at server startup and on the /api/health endpoint.
+// Returns { success: true } or { success: false, error: string }.
+// NEVER throws an unhandled error.
+export const verifyConnection = async () => {
+  try {
+    await withTimeout(transporter.verify(), TIMEOUT_MS);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
   }
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: 'enqueryservice.pushdigital@gmail.com',
-      pass: 'mfgr uipv fgmq wejc'
-    }
+};
 
-  });
-
-  const subject = "Business query from " + name;
-
-
+// ─── sendEnquiryEmail ─────────────────────────────────────────────────────────
+// Core email function. Decoupled from Express req/res so it can be tested
+// independently and reused. Returns a result object — never throws.
+export const sendEnquiryEmail = async ({ name, email, phone, message }) => {
   const mailOptions = {
-    from: 'enqueryservice.pushdigital@gmail.com',
-    to: 'ramkumar.pushdigital@gmail.com',
-    subject: subject,
-
+    from:    process.env.EMAIL_FROM || `"Push Digital" <${process.env.GMAIL_USER}>`,
+    to:      process.env.ENQUIRY_RECIPIENT || 'ramkumar.pushdigital@gmail.com',
+    subject: `Business query from ${name}`,
     html: `<!DOCTYPE html>
 <html>
 <head>
@@ -91,74 +112,31 @@ const mail_service = async (req, res) => {
             >
 
               <tr>
-                <td 
-                  style="
-                    padding:10px;
-                    border-bottom:1px solid #eee;
-                    color:#888;
-                    width:120px;
-                  "
-                >
+                <td style="padding:10px; border-bottom:1px solid #eee; color:#888; width:120px;">
                   Name
                 </td>
-
-                <td 
-                  style="
-                    padding:10px;
-                    border-bottom:1px solid #eee;
-                    color:#333;
-                  "
-                >
+                <td style="padding:10px; border-bottom:1px solid #eee; color:#333;">
                   ${name}
                 </td>
               </tr>
 
               <tr>
-                <td 
-                  style="
-                    padding:10px;
-                    border-bottom:1px solid #eee;
-                    color:#888;
-                  "
-                >
+                <td style="padding:10px; border-bottom:1px solid #eee; color:#888;">
                   Email
                 </td>
-
-                <td 
-                  style="
-                    padding:10px;
-                    border-bottom:1px solid #eee;
-                    color:#333;
-                  "
-                >
+                <td style="padding:10px; border-bottom:1px solid #eee; color:#333;">
                   ${email}
                 </td>
               </tr>
 
               <tr>
-                <td 
-                  style="
-                    padding:10px;
-                    border-bottom:1px solid #eee;
-                    color:#888;
-                  "
-                >
+                <td style="padding:10px; border-bottom:1px solid #eee; color:#888;">
                   Phone
                 </td>
-
-                <td 
-                  style="
-                    padding:10px;
-                    border-bottom:1px solid #eee;
-                    color:#333;
-                  "
-                >
+                <td style="padding:10px; border-bottom:1px solid #eee; color:#333;">
                   ${phone}
                 </td>
               </tr>
-
-
-             
 
             </table>
 
@@ -168,26 +146,15 @@ const mail_service = async (req, res) => {
               cellpadding="0" 
               cellspacing="0" 
               border="0" 
-              style="
-                background:#f1fff1;
-                border-left:4px solid #43EB01;
-                border-radius:5px;
-                margin-top:20px;
-              "
+              style="background:#f1fff1; border-left:4px solid #43EB01; border-radius:5px; margin-top:20px;"
             >
-
               <tr>
                 <td style="padding:15px; color:#333;">
-
                   <strong>Message:</strong>
-
                   <br><br>
-
                   ${message}
-
                 </td>
               </tr>
-
             </table>
 
           </td>
@@ -196,7 +163,6 @@ const mail_service = async (req, res) => {
         <!-- Reply Button -->
         <tr>
           <td align="center" style="padding:20px;">
-
             <a 
               href="mailto:${email}" 
               style="
@@ -211,7 +177,6 @@ const mail_service = async (req, res) => {
             >
               Reply to ${name}
             </a>
-
           </td>
         </tr>
 
@@ -226,15 +191,9 @@ const mail_service = async (req, res) => {
               color:#cccccc;
             "
           >
-
-            <span style="color:#43EB01; font-weight:bold;">
-              Push Digital
-            </span>
-
+            <span style="color:#43EB01; font-weight:bold;">Push Digital</span>
             &mdash;
-
             This is an automated notification from your website contact form.
-
           </td>
         </tr>
 
@@ -250,23 +209,47 @@ const mail_service = async (req, res) => {
   };
 
   try {
-    const info = await transporter.sendMail(mailOptions);
-
-    if (info.response.includes('250')) {
-      console.log(`Email sent: ${info.response}`);
-      return res.status(200).json({ message: 'Email sent successfully' });
-    } else {
-      return res.status(500).json({ error: 'Failed to send email' });
-    }
+    console.log(`[emailService] Attempting to send email — from: ${mailOptions.from}, to: ${mailOptions.to}`);
+    // withTimeout wraps sendMail as the second safety layer
+    const info = await withTimeout(transporter.sendMail(mailOptions), TIMEOUT_MS);
+    console.log(`[emailService] ✅ Email sent successfully. MessageId: ${info.messageId}`);
+    return { success: true, messageId: info.messageId };
   } catch (error) {
-    // Fix #3: Always send a response in catch so the client never hangs
-    console.error(`Error sending email: ${error}`);
-    return res.status(500).json({ error: 'An error occurred while sending the email' });
+    console.error(`[emailService] ❌ Failed to send email: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+};
+
+// ─── mail_service (default export — backward-compatible route handler) ─────────
+// Wraps sendEnquiryEmail for use as a direct Express route handler.
+// Validates input, delegates to sendEnquiryEmail, and guarantees res.json()
+// is called in ALL code paths.
+const mail_service = async (req, res) => {
+  // Safe fallback: prevents crash if body parsing failed (missing Content-Type header)
+  const { name, email, phone, message } = req.body || {};
+
+  // Validate BEFORE touching SMTP — returns 400 instantly
+  if (!name || !email || !message) {
+    return res.status(400).json({
+      success: false,
+      error: 'Required fields missing: name, email, and message are required',
+    });
   }
 
+  try {
+    const result = await sendEnquiryEmail({ name, email, phone, message });
 
-
-
-}
+    if (result.success) {
+      return res.status(200).json({ success: true, message: 'Email sent successfully' });
+    } else {
+      // SMTP accepted the request but delivery failed (timeout, auth error, etc.)
+      return res.status(502).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    // Catch-all: sendEnquiryEmail should never throw, but this is the last safety net
+    console.error(`[mail_service] Unexpected error: ${error.message}`);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+};
 
 export default mail_service;
