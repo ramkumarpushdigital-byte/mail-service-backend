@@ -20,8 +20,8 @@ const TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS || '10000', 10);
 //     • Set BREVO_USER and BREVO_SMTP_KEY in your Render environment variables.
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
-  port: 587,
-  secure: false,          // STARTTLS on port 587
+  port: 2525,               // Port 2525 — alternative to 587, not blocked by Render egress filters
+  secure: false,            // STARTTLS
   auth: {
     user: process.env.BREVO_USER,       // Your Brevo login email
     pass: process.env.BREVO_SMTP_KEY,   // Brevo SMTP key (not your password)
