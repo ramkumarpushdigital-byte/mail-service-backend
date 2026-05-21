@@ -2,19 +2,31 @@ import nodemailer from 'nodemailer';
 
 // ─── Timeout config ────────────────────────────────────────────────────────────
 // Read from env so it can be tuned per environment without code changes.
-const TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS || '8000', 10);
+const TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS || '10000', 10);
 
 // ─── Transporter (module-level singleton) ─────────────────────────────────────
 // Created once at startup — not inside each request — so the TCP connection
-// pool is reused. Gmail SMTP is kept as required.
+// pool is reused.
+//
+// ⚠️  Gmail SMTP is intentionally NOT used here.
+//     Google blocks SMTP connections originating from cloud provider IPs
+//     (Render, Railway, Fly.io, etc.) for security reasons — auth will always
+//     fail regardless of credentials.
+//
+// ✅  We use Brevo (formerly Sendinblue) SMTP instead:
+//     • Free tier: 300 emails/day
+//     • Port 587 (STARTTLS) — never blocked by Render
+//     • Sign up: https://app.brevo.com → SMTP & API → Generate SMTP key
+//     • Set BREVO_USER and BREVO_SMTP_KEY in your Render environment variables.
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp-relay.brevo.com',
+  port: 587,
+  secure: false,          // STARTTLS on port 587
   auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
+    user: process.env.BREVO_USER,       // Your Brevo login email
+    pass: process.env.BREVO_SMTP_KEY,   // Brevo SMTP key (not your password)
   },
   // Layer 1 timeout: Nodemailer's own connection deadlines.
-  // These fire for slow TCP handshakes on most environments.
   connectionTimeout: TIMEOUT_MS,
   greetingTimeout:   TIMEOUT_MS,
   socketTimeout:     TIMEOUT_MS,
@@ -22,10 +34,8 @@ const transporter = nodemailer.createTransport({
 
 // ─── withTimeout ──────────────────────────────────────────────────────────────
 // Layer 2 timeout: a hard Promise.race deadline.
-// Critical for cloud environments (Render, Railway) where Google silently
-// drops the TCP connection — Nodemailer's built-in timeouts never fire
-// because the OS-level socket never errors. This wrapper guarantees the
-// Promise always settles within `ms` milliseconds regardless.
+// Acts as a safety net on cloud hosts where TCP connections may silently
+// stall — guarantees the Promise always settles within `ms` milliseconds.
 const withTimeout = (promise, ms) => {
   const deadline = new Promise((_, reject) =>
     setTimeout(() => reject(new Error(`SMTP timed out after ${ms}ms — Gmail may be blocking this host`)), ms)
@@ -52,8 +62,8 @@ export const verifyConnection = async () => {
 // independently and reused. Returns a result object — never throws.
 export const sendEnquiryEmail = async ({ name, email, phone, message }) => {
   const mailOptions = {
-    from:    process.env.EMAIL_FROM || `"Push Digital" <${process.env.GMAIL_USER}>`,
-    to:      process.env.ENQUIRY_RECIPIENT || 'ramkumar.pushdigital@gmail.com',
+    from:    process.env.EMAIL_FROM || '"Push Digital" <enqueryservice.pushdigital@gmail.com>',
+    to:      process.env.ENQUIRY_RECIPIENT || 'ramkumarramar2237@gmail.com',
     subject: `Business query from ${name}`,
     html: `<!DOCTYPE html>
 <html>

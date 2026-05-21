@@ -1,3 +1,4 @@
+import 'dotenv/config';    // ← MUST be first — loads .env before any other import reads process.env
 import express from 'express';
 import cors from 'cors';
 import connectDB from './config/db.mjs';
