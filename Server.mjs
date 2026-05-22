@@ -6,9 +6,22 @@ import userRoutes from './Routes/Users.mjs';
 import { verifyConnection } from './utils/nodemailer.mjs';
 
 const app = express();
+const allowedOrigins = [
+ "https://push.digital/"
+];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
 }));
+
+
 app.use(express.json());
 // connectDB();
 

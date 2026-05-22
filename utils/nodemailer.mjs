@@ -63,7 +63,7 @@ export const verifyConnection = async () => {
 export const sendEnquiryEmail = async ({ name, email, phone, message }) => {
   const mailOptions = {
     from:    process.env.EMAIL_FROM || '"Push Digital" <enqueryservice.pushdigital@gmail.com>',
-    to:      process.env.ENQUIRY_RECIPIENT || 'ramkumarramar2237@gmail.com',
+    to:      process.env.ENQUIRY_RECIPIENT ,
     subject: `Business query from ${name}`,
     html: `<!DOCTYPE html>
 <html>
