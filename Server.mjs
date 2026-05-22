@@ -7,8 +7,8 @@ import { verifyConnection } from './utils/nodemailer.mjs';
 
 const app = express();
 const allowedOrigins = [
-  "https://push.digital",
-  "https://www.push.digital"
+  // "https://push.digital",
+  // "https://www.push.digital"gti
 ];
 
 app.use(cors({
