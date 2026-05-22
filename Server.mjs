@@ -62,4 +62,4 @@ app.listen(PORT, async () => {
     console.warn(`[startup] ⚠️  SMTP unreachable — email sending will fail: ${smtpStatus.error}`);
     console.warn('[startup] ⚠️  If deployed on Render/Railway, Gmail SMTP may be blocked by Google.');
   }
-});
+}); 
